@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22%u305B%u3069%u308A%u30C1%u30A7%u30C3%u30AB%u30FC%22%2C%22short_name%22%3A%22%u305B%u3069%u308A%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23111418%22%2C%22theme_color%22%3A%22%23111418%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22icon%2Ficon-192.png%22%2C%22sizes%22%3A%22192x192%22%2C%22type%22%3A%22image%2Fpng%22%7D%5D%7D">
+<title>せどりチェッカー Lite</title>
+<script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script>
+if('serviceWorker' in navigator){
+  addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+}
+</script>
+<style>
+  :root{--bg:#111418;--card:#1b2026;--line:#2b333c;--tx:#e8ecf0;--sub:#8b96a1;--acc:#4fc38a;--warn:#e06c5f}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--tx);font-family:"Segoe UI","Hiragino Sans","Noto Sans JP",sans-serif;padding:14px;max-width:1100px;margin:0 auto;padding-bottom:env(safe-area-inset-bottom)}
+  h1{font-size:19px;margin-bottom:4px}
+  .sub{color:var(--sub);font-size:11px;margin-bottom:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+  label{display:block;font-size:12px;color:var(--sub);margin:8px 0 4px}
+  input,select{width:100%;padding:10px;border-radius:7px;border:1px solid var(--line);background:#141920;color:var(--tx);font-size:16px}
+  input:focus{outline:1px solid var(--acc)}
+  button{cursor:pointer;border:none;border-radius:7px;padding:11px 14px;font-size:14px;background:#242c35;color:var(--tx)}
+  button.primary{background:var(--acc);color:#08210f;font-weight:700}
+  .grid{display:grid;gap:10px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:1fr 1fr 1fr}
+  @media(max-width:700px){.g3{grid-template-columns:1fr 1fr}}
+  .links{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .links a{text-decoration:none;background:#242c35;color:var(--tx);padding:9px 12px;border-radius:7px;font-size:13px;border:1px solid var(--line);word-break:break-all}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:7px 6px;border-bottom:1px solid var(--line);text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--sub);font-weight:400;font-size:11px}
+  .ok{color:var(--acc);font-weight:700}
+  .ng{color:var(--warn);font-weight:700}
+  .badge{display:inline-block;font-size:10px;padding:2px 7px;border-radius:10px;background:#242c35;color:var(--sub);margin-left:6px}
+  #video{width:100%;border-radius:8px;background:#000;display:none}
+  #scanStatus{font-size:12px;color:var(--sub);margin-top:6px}
+  .offline{background:var(--warn);color:#fff;padding:6px 12px;border-radius:6px;font-size:12px;display:none;margin-bottom:10px}
+  .rowbtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  #history td{cursor:pointer}
+  .imgwrap{margin-top:10px;text-align:center}
+  #preview{max-width:100%;max-height:260px;border-radius:8px;border:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div class="offline" id="offBanner">オフライン：計算・履歴・バーコード読取は可能。調査リンクはネット復帰後に。</div>
+<h1>せどりチェッカー Lite</h1>
+<div class="sub">JAN/ISBNバーコード読取・画像検索リンク・利益計算・履歴。価格はリンク先で目視確認（スクレイプ無し）。データは端末内のみ。</div>
+
+<div class="card">
+  <label>カメラでバーコード読取（JAN/ISBN。HTTPSまたはlocalhost環境で使用可）</label>
+  <div class="rowbtns" style="margin-top:2px">
+    <button class="primary" onclick="startScan()">📷 カメラ起動</button>
+    <button onclick="stopScan()">停止</button>
+    <input type="file" id="imgFile" accept="image/*" style="display:none" onchange="decodeFile(this)">
+    <button onclick="document.getElementById('imgFile').click()">🖼 画像から読取</button>
+  </div>
+  <video id="video" playsinline muted></video>
+  <div id="scanStatus"></div>
+  <div class="imgwrap"><img id="preview" style="display:none"></div>
+</div>
+
+<div class="card">
+  <div class="grid g2">
+    <div><label>商品名（必須）</label><input id="name" placeholder="例: HGUC ガンダム"></div>
+    <div><label>JAN / ISBNコード（任意）</label><input id="jan" inputmode="numeric" placeholder="例: 4902330XXXXXX"></div>
+  </div>
+  <div class="rowbtns">
+    <button class="primary" onclick="buildLinks()">調査リンク生成</button>
+    <button onclick="pickFromHistory()">履歴から呼ぶ</button>
+  </div>
+  <div class="links" id="links"></div>
+</div>
+
+<div class="card">
+  <label>仕入価格（円）</label>
+  <input id="cost" type="number" inputmode="numeric" placeholder="例: 1000">
+  <div class="grid g3" style="margin-top:4px">
+    <div><label>想定売却額（円）</label><input id="price" type="number" inputmode="numeric" placeholder="例: 3000"></div>
+    <div><label>販売先</label>
+      <select id="channel">
+        <option value="amazon">Amazon（自己配送）</option>
+        <option value="fba">Amazon FBA</option>
+        <option value="mercari">メルカリ</option>
+        <option value="yahoo">ヤフオク</option>
+        <option value="rakuten">楽天フリマ</option>
+      </select>
+    </div>
+    <div><label>送料・その他経費（円）</label><input id="extra" type="number" inputmode="numeric" value="0"></div>
+  </div>
+  <div class="rowbtns">
+    <button class="primary" onclick="calc()">利益計算</button>
+    <button onclick="saveItem()">履歴に保存</button>
+  </div>
+  <table id="calcTable" style="display:none;margin-top:12px"></table>
+</div>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+    <b>履歴</b>
+    <div style="display:flex;gap:8px">
+      <button onclick="exportCSV()">CSV書き出し</button>
+      <button onclick="clearHist()" style="color:var(--warn)">全消去</button>
+    </div>
+  </div>
+  <table id="history"></table>
+</div>
+
+<script>
+const CAT={amazon:15,fba:15,mercari:10,yahoo:8.88,rakuten:10};
+const SHIP={amazon:260,fba:350,mercari:0,yahoo:0,rakuten:0};
+const $=id=>document.getElementById(id);
+const esc=s=>encodeURIComponent(s||'').replace(/%20/g,'+');
+
+function buildLinks(){
+  const name=$('name').value.trim(),jan=$('jan').value.replace(/\D/g,'');
+  if(!name&&!jan){alert('商品名かJAN/ISBNを入力（または読取）してください');return;}
+  if(!navigator.onLine){alert('現在オフライン。リンクは生成できません（計算・履歴は可能）');return;}
+  const q=name||jan;
+  const isbn=(jan.length===13&&jan.startsWith('97'))||jan.length===10;
+  const amz=isbn?'https://www.amazon.co.jp/s?k='+esc(jan):'https://www.amazon.co.jp/s?k='+esc(q);
+  const L=[
+    ['Amazon 検索',amz],
+    ['メルカリ','https://www.mercari.com/jp/search/?keyword='+esc(q)],
+    ['ヤフオク','https://auctions.yahoo.co.jp/search/search?p='+esc(q)],
+    ['楽天市場','https://search.rakuten.co.jp/search/mall/'+esc(q)],
+    ['ラクマ(楽天フリマ)','https://fril.jp/search/'+esc(q)],
+    ['駿河屋','https://www.suruga-ya.jp/search?category=&searchWord='+esc(q)],
+    ['ブックオフ買取','https://www.bookoffonline.co.jp/olb/olbsearch/usedtsearch?dtm=1&kywd='+esc(q)],
+    ['Google画像検索','https://www.google.com/search?tbm=isch&q='+esc(q)],
+    ['Googleレンズ的(画像で検索は撮影→スマホのレンズ/Googleアプリで)','https://lens.google.com/']
+  ];
+  $('links').innerHTML=L.map(([t,u])=>`<a href="${u}" target="_blank" rel="noopener">${t} ↗</a>`).join('');
+  $('links').insertAdjacentHTML('beforeend', `<a href="https://www.google.com/search?q=${esc(q)}+型番" target="_blank" rel="noopener">型番/商品詳細を調べる ↗</a>`);
+}
+
+function calc(){
+  const cost=+$('cost').value||0,price=+$('price').value||0,extra=+$('extra').value||0,ch=$('channel').value;
+  if(!price){alert('想定売却額を入れてください');return;}
+  const fee=Math.floor(price*CAT[ch]/100);
+  const other=fee+extra+((ch==='amazon'||ch==='fba')?SHIP[ch]:0);
+  const profit=price-cost-other;
+  const roi=cost?(profit/cost*100):0, margin=price?(profit/price*100):0;
+  const verdict=profit>0&&margin>=15?['ok','仕入れ判定: ◎ あり']:profit>0?['ok','仕入れ判定: △ 利益は薄い']:['ng','仕入れ判定: × 赤字'];
+  $('calcTable').style.display='';
+  $('calcTable').innerHTML=`
+    <tr><th>項目</th><th>金額</th></tr>
+    <tr><td>売却額</td><td>¥${price.toLocaleString()}</td></tr>
+    <tr><td>販売手数料(${CAT[ch]}%)</td><td>-¥${fee.toLocaleString()}</td></tr>
+    ${(ch==='amazon'||ch==='fba')?`<tr><td>配送代行/送料(概算)</td><td>-¥${SHIP[ch].toLocaleString()}</td></tr>`:''}
+    <tr><td>その他経費</td><td>-¥${extra.toLocaleString()}</td></tr>
+    <tr><td>仕入額</td><td>-¥${cost.toLocaleString()}</td></tr>
+    <tr><td>純利益</td><td class="${profit>0?'ok':'ng'}">¥${profit.toLocaleString()}</td></tr>
+    <tr><td>利益率 / ROI</td><td>${margin.toFixed(1)}% / ${roi.toFixed(1)}%</td></tr>
+    <tr><td colspan="2" style="text-align:left"><span class="${verdict[0]}">${verdict[1]}</span><span class="badge">手数料・配送料は概算。実際は各プラットフォームの料金表で要確認</span></td></tr>`;
+  localStorage.setItem('lastCalc',JSON.stringify({name:$('name').value,jan:$('jan').value,cost,price,extra,channel:ch,profit,margin}));
+}
+
+function saveItem(){
+  const c=JSON.parse(localStorage.getItem('lastCalc')||'null');
+  if(!c||!c.price){alert('先に「利益計算」を実行してください');return;}
+  const h=JSON.parse(localStorage.getItem('sedoriHist')||'[]');
+  h.unshift({...c,ts:new Date().toISOString().slice(0,16).replace('T',' ')});
+  localStorage.setItem('sedoriHist',JSON.stringify(h.slice(0,500)));
+  renderHist();
+}
+function renderHist(){
+  const h=JSON.parse(localStorage.getItem('sedoriHist')||'[]');
+  $('history').innerHTML=h.length?'<tr><th>日時</th><th>商品</th><th>仕入</th><th>売却</th><th>利益</th><th>率</th><th>先</th></tr>'+
+    h.map((r,i)=>`<tr onclick="loadRow(${i})" title="クリックで再読込"><td>${r.ts}</td><td>${(r.name||'(名称未入力)').slice(0,24)}</td><td>¥${(+r.cost).toLocaleString()}</td><td>¥${(+r.price).toLocaleString()}</td><td class="${r.profit>0?'ok':'ng'}">¥${(+r.profit).toLocaleString()}</td><td>${(+r.margin).toFixed(0)}%</td><td>${r.channel}</td></tr>`).join('')
+    :'<tr><td style="text-align:center;color:var(--sub)">保存データなし</td></tr>';
+}
+function loadRow(i){
+  const r=JSON.parse(localStorage.getItem('sedoriHist'))[i];
+  $('name').value=r.name||'';$('jan').value=r.jan||'';$('cost').value=r.cost;$('price').value=r.price;$('extra').value=r.extra;$('channel').value=r.channel;
+  buildLinks();calc();
+}
+function pickFromHistory(){
+  const h=JSON.parse(localStorage.getItem('sedoriHist')||'[]');
+  if(!h.length){alert('履歴が空です');return;}
+  const msg=h.slice(0,20).map((r,i)=>`${i+1}. ${r.name||r.jan||'(無名)'} [${r.jan||'JANなし'}]`).join('\n');
+  const n=prompt('番号を選択:\n'+msg);
+  if(n&&h[+n-1])loadRow(+n-1);
+}
+function exportCSV(){
+  const h=JSON.parse(localStorage.getItem('sedoriHist')||'[]');
+  if(!h.length){alert('履歴が空です');return;}
+  const csv='日時,商品,JAN,仕入額,売却額,経費,販売先,利益,利益率\n'+h.map(r=>[r.ts,r.name,r.jan,r.cost,r.price,r.extra,r.channel,r.profit,(+r.margin).toFixed(1)].map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv'}));
+  a.download='sedori_hist_'+new Date().toISOString().slice(0,10)+'.csv';a.click();
+}
+function clearHist(){if(confirm('履歴を全削除しますか？')){localStorage.removeItem('sedoriHist');renderHist();}}
+
+/* ---- バーコード: カメラ連続読取 ---- */
+let codeReader=null,controls=null;
+function ensureReader(){
+  if(typeof ZXing==='undefined'){alert('ZXingライブラリ未読込（オフライン初回はネット接続が必要です）');return false;}
+  if(!codeReader)codeReader=new ZXing.BrowserMultiFormatReader();
+  return true;
+}
+function startScan(){
+  if(!ensureReader())return;
+  $('video').style.display='';
+  $('scanStatus').textContent='カメラ起動中…';
+  Promise.resolve(codeReader.decodeFromConstraints({video:{facingMode:'environment'}},$('video'),(res,err)=>{
+    if(res){
+      const t=res.getText();
+      $('jan').value=t.replace(/\D/g,'');
+      $('scanStatus').textContent='読取成功: '+t+'（フィールドに反映しました）';
+      if(navigator.vibrate)navigator.vibrate(80);
+      stopScan();
+      if($('name').value.trim()&&navigator.onLine)buildLinks();
+    }
+  })).then(c=>controls=c).catch(e=>$('scanStatus').textContent='カメラエラー: '+e);
+}
+function stopScan(){
+  if(controls){controls.stop();controls=null;}
+  $('video').style.display='none';
+}
+/* ---- バーコード: 画像ファイルから読取 ---- */
+function decodeFile(input){
+  const f=input.files&&input.files[0];
+  if(!f)return;
+  const url=URL.createObjectURL(f);
+  const img=$('preview');img.src=url;img.style.display='';
+  if(!ensureReader())return;
+  const reader=new ZXing.BrowserMultiFormatReader();
+  reader.decodeFromImageUrl(url).then(res=>{
+    $('jan').value=res.getText().replace(/\D/g,'');
+    $('scanStatus').textContent='画像から読取成功: '+res.getText();
+    if($('name').value.trim()&&navigator.onLine)buildLinks();
+  }).catch(()=>$('scanStatus').textContent='画像からはコードを検出できませんでした（手入力してください）')
+    .finally(()=>{reader.reset();URL.revokeObjectURL(url);});
+  input.value='';
+}
+
+/* ---- オフライン表示 ---- */
+function updOnline(){$('offBanner').style.display=navigator.onLine?'none':'block';}
+addEventListener('online',updOnline);addEventListener('offline',updOnline);
+$('jan').addEventListener('input',e=>e.target.value=e.target.value.replace(/\D/g,''));
+renderHist();updOnline();
+</script>
+</body>
+</html>
