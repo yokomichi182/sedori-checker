@@ -133,8 +133,8 @@ function buildLinks(){
     ['ラクマ(楽天フリマ)','https://fril.jp/search/'+esc(q)],
     ['駿河屋','https://www.suruga-ya.jp/search?category=&searchWord='+esc(q)],
     ['ブックオフ買取','https://www.bookoffonline.co.jp/olb/olbsearch/usedtsearch?dtm=1&kywd='+esc(q)],
-    ['Google画像検索','https://www.google.com/search?tbm=isch&q='+esc(q)],
-    ['Googleレンズ的(画像で検索は撮影→スマホのレンズ/Googleアプリで)','https://lens.google.com/']
+    ['Google 画像検索','https://images.google.co.jp/search?tbm=isch&q='+esc(q)],
+    ['Google ウェブ検索','https://www.google.com/search?q='+esc(q)]
   ];
   $('links').innerHTML=L.map(([t,u])=>`<a href="${u}" target="_blank" rel="noopener">${t} ↗</a>`).join('');
   $('links').insertAdjacentHTML('beforeend', `<a href="https://www.google.com/search?q=${esc(q)}+型番" target="_blank" rel="noopener">型番/商品詳細を調べる ↗</a>`);
@@ -225,22 +225,40 @@ async function getUserMediaSafe(){
   }
 }
 /* ---- 連続読取 ---- */
+let scanTimer=null;
 async function startScan(){
   if(!ensureReader())return;
   stopScan();
-  logStatus('カメラ起動中…');
+  logStatus('カメラ起動中…（初回は数秒かかります）');
   const s=await getUserMediaSafe();
   if(!s)return;
   $('video').srcObject=s;$('video').style.display='';
-  const loop=async()=>{
-    if(!stream)return;
-    try{
-      const r=await scanFrame();
-      if(r){onCodeRead(r);return;}
-    }catch(_){}
-    setTimeout(loop,300);
-  };
-  loop();
+  try{await $('video').play();}catch(e){}
+  // フレーム待ち: 5秒以内に映像が出なければ確実路線へ誘導
+  let waited=0;
+  const waitIv=setInterval(()=>{
+    if(!stream){clearInterval(waitIv);return;}
+    waited+=500;
+    if($('video').videoWidth>0){
+      clearInterval(waitIv);
+      logStatus('📖 スキャン中… バーコードを画面の中央に近づけてください');
+      const loop=async()=>{
+        if(!stream)return;
+        try{
+          const r=await scanFrame();
+          if(r){onCodeRead(r);return;}
+        }catch(_){}
+        scanTimer=setTimeout(loop,400);
+      };
+      loop();
+    }else if(waited>=5000){
+      clearInterval(waitIv);
+      logStatus('⚠ 映像が表示されません（この機種のブラウザとの相性の可能性）。\n下の「📸 撮影して読取」を押してください。こちらはスマホのカメラアプリが直接起動するので確実です。');
+      stopScan();
+    }else{
+      logStatus('カメラ準備中… ('+Math.round(waited/10)/10+'秒 / 5秒)');
+    }
+  },500);
 }
 async function scanFrame(){
   const v=$('video');
@@ -280,6 +298,7 @@ function onCodeRead(res){
 }
 function stopScan(){
   if(controls){try{controls.stop();}catch(_){} controls=null;}
+  if(scanTimer){clearTimeout(scanTimer);scanTimer=null;}
   if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
   $('video').style.display='none';
 }
