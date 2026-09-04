@@ -52,16 +52,18 @@ if('serviceWorker' in navigator){
 <div class="sub">JAN/ISBNバーコード読取・画像検索リンク・利益計算・履歴。価格はリンク先で目視確認（スクレイプ無し）。データは端末内のみ。</div>
 
 <div class="card">
-  <label>カメラでバーコード読取（JAN/ISBN。HTTPSまたはlocalhost環境で使用可）</label>
+  <label>カメラでバーコード読取（JAN/ISBN）</label>
   <div class="rowbtns" style="margin-top:2px">
-    <button class="primary" onclick="startScan()">📷 カメラ起動</button>
+    <button class="primary" onclick="shoot()">📸 撮影して読取（確実）</button>
+    <button onclick="startScan()">📷 カメラ連続読取</button>
     <button onclick="stopScan()">停止</button>
     <input type="file" id="imgFile" accept="image/*" style="display:none" onchange="decodeFile(this)">
-    <button onclick="document.getElementById('imgFile').click()">🖼 画像から読取</button>
+    <button onclick="document.getElementById('imgFile').click()">🖼 端末の画像から読取</button>
   </div>
-  <video id="video" playsinline muted></video>
-  <div id="scanStatus"></div>
+  <video id="video" autoplay playsinline muted></video>
+  <div id="scanStatus" style="white-space:pre-wrap"></div>
   <div class="imgwrap"><img id="preview" style="display:none"></div>
+  <div class="links" id="imgLinks" style="display:none"></div>
 </div>
 
 <div class="card">
@@ -196,46 +198,110 @@ function exportCSV(){
 }
 function clearHist(){if(confirm('履歴を全削除しますか？')){localStorage.removeItem('sedoriHist');renderHist();}}
 
-/* ---- バーコード: カメラ連続読取 ---- */
-let codeReader=null,controls=null;
+/* ---- バーコード: 共通 ---- */
+let codeReader=null,controls=null,stream=null;
 function ensureReader(){
-  if(typeof ZXing==='undefined'){alert('ZXingライブラリ未読込（オフライン初回はネット接続が必要です）');return false;}
+  if(typeof ZXing==='undefined'){
+    $('scanStatus').textContent='⚠ ZXingライブラリ未読込です。ネットに繋いで再読込してください。';
+    return false;
+  }
   if(!codeReader)codeReader=new ZXing.BrowserMultiFormatReader();
   return true;
 }
-function startScan(){
+function logStatus(msg){$('scanStatus').textContent=msg;}
+async function getUserMediaSafe(){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    logStatus('⚠ この環境ではカメラAPIが使えません。HTTPSページかどうか、ブラウザはChrome/最新Safariか確認してください。\n端末の画像から読取なら使えます。');
+    return null;
+  }
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}});
+    return stream;
+  }catch(e){
+    const reasons={NotAllowedError:'⚠ カメラ許可が拒否されています。ブラウザ設定 → サイトの権限 → カメラ → 許可 に変更してください。',
+      NotFoundError:'⚠ カメラが見つかりません。',NotReadableError:'⚠ カメラが他のアプリで使用中です。'};
+    logStatus(reasons[e.name]||('⚠ カメラエラー: '+e.name+' '+e.message));
+    return null;
+  }
+}
+/* ---- 連続読取 ---- */
+async function startScan(){
   if(!ensureReader())return;
-  $('video').style.display='';
-  $('scanStatus').textContent='カメラ起動中…';
-  Promise.resolve(codeReader.decodeFromConstraints({video:{facingMode:'environment'}},$('video'),(res,err)=>{
-    if(res){
-      const t=res.getText();
-      $('jan').value=t.replace(/\D/g,'');
-      $('scanStatus').textContent='読取成功: '+t+'（フィールドに反映しました）';
-      if(navigator.vibrate)navigator.vibrate(80);
-      stopScan();
-      if($('name').value.trim()&&navigator.onLine)buildLinks();
-    }
-  })).then(c=>controls=c).catch(e=>$('scanStatus').textContent='カメラエラー: '+e);
+  stopScan();
+  logStatus('カメラ起動中…');
+  const s=await getUserMediaSafe();
+  if(!s)return;
+  $('video').srcObject=s;$('video').style.display='';
+  const loop=async()=>{
+    if(!stream)return;
+    try{
+      const r=await scanFrame();
+      if(r){onCodeRead(r);return;}
+    }catch(_){}
+    setTimeout(loop,300);
+  };
+  loop();
+}
+async function scanFrame(){
+  const v=$('video');
+  if(!v.videoWidth)return null;
+  const c=document.createElement('canvas');
+  const W=v.videoWidth,H=v.videoHeight;
+  const scale=Math.min(1,800/W);
+  c.width=W*scale;c.height=H*scale;
+  c.getContext('2d').drawImage(v,0,0,c.width,c.height);
+  return await new Promise((resolve,reject)=>{
+    const r=new ZXing.BrowserMultiFormatReader();
+    try{r.decodeFromImageUrl(c.toDataURL('image/png')).then(x=>{r.reset();resolve(x);}).catch(e=>{r.reset();reject(e);});}
+    catch(e){r.reset();reject(e);}
+  });
+}
+/* ---- 撮影1枚読取（スマホの標準カメラアプリを使う確実路線） ---- */
+function shoot(){
+  // capture属性付きの隠しinputを動的に使う: スマホではカメラアプリが直接起動する
+  let inp=document.getElementById('camFile');
+  if(!inp){
+    inp=document.createElement('input');
+    inp.type='file';inp.id='camFile';inp.accept='image/*';inp.setAttribute('capture','environment');
+    inp.style.display='none';
+    inp.addEventListener('change',()=>{if(inp.files&&inp.files[0])decodeFile(inp);inp.value='';});
+    document.body.appendChild(inp);
+  }
+  inp.click();
+}
+/* ---- 読取成功時共通 ---- */
+function onCodeRead(res){
+  const t=res.getText();
+  $('jan').value=t.replace(/\D/g,'');
+  logStatus('✅ 読取成功: '+t+'\nJAN欄に反映しました');
+  if(navigator.vibrate)navigator.vibrate(80);
+  stopScan();
+  if($('name').value.trim()&&navigator.onLine)buildLinks();
 }
 function stopScan(){
-  if(controls){controls.stop();controls=null;}
+  if(controls){try{controls.stop();}catch(_){} controls=null;}
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
   $('video').style.display='none';
 }
 /* ---- バーコード: 画像ファイルから読取 ---- */
-function decodeFile(input){
+async function decodeFile(input){
   const f=input.files&&input.files[0];
   if(!f)return;
   const url=URL.createObjectURL(f);
   const img=$('preview');img.src=url;img.style.display='';
+  logStatus('画像を解析中…');
   if(!ensureReader())return;
   const reader=new ZXing.BrowserMultiFormatReader();
-  reader.decodeFromImageUrl(url).then(res=>{
-    $('jan').value=res.getText().replace(/\D/g,'');
-    $('scanStatus').textContent='画像から読取成功: '+res.getText();
-    if($('name').value.trim()&&navigator.onLine)buildLinks();
-  }).catch(()=>$('scanStatus').textContent='画像からはコードを検出できませんでした（手入力してください）')
-    .finally(()=>{reader.reset();URL.revokeObjectURL(url);});
+  try{
+    const res=await reader.decodeFromImageUrl(url);
+    onCodeRead(res);
+  }catch(_){
+    logStatus('⚠ 画像からコードを検出できませんでした。\n・バーコード部分を近接・ピントを合わせて撮影\n・横長で真ん中にバーコードが大きく写るように\n・それでも駄目ならJAN数字を手入力');
+    $('imgLinks').style.display='';
+    $('imgLinks').innerHTML='<b>画像検索の使い方:</b> 撮った画像はそのままではブラウザから自動検索できません（Googleレンズは画像のアップロード操作が必要）。一番確実なのは <a href="https://lens.google.com/" target="_blank" rel="noopener">Googleレンズ</a> を開いて画像をアップロード、またはGoogleアプリで撮影→レンズ。商品名が分かるなら下の「調査リンク生成」のGoogle画像検索で十分です。';
+  }
+  try{reader.reset();}catch(_){}
+  URL.revokeObjectURL(url);
   input.value='';
 }
 
